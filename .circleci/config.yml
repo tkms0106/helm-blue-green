@@ -1,0 +1,243 @@
+version: 2.1
+orbs:
+  awscli: circleci/aws-cli@0.1.20 # https://circleci.com/orbs/registry/orb/circleci/aws-cli
+  awsecr: circleci/aws-ecr@6.7.0 # https://circleci.com/orbs/registry/orb/circleci/aws-ecr
+  kube: circleci/kubernetes@0.11.0 # https://circleci.com/orbs/registry/orb/circleci/kubernetes
+  aws-cli-v2: #https://gist.github.com/fujiwara/58c1c95df14d82a8b1a8d8d404170879
+    commands:
+      install:
+        steps:
+          - run: |
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              sudo ./aws/install
+
+jobs:
+  build:
+    executor: awsecr/default
+    environment:
+      AWS_ECR_ACCOUNT_URL: ""
+      AWS_ECR_ACCOUNT_URL_PROD: ""
+      IMAGE_REPO: ""
+      IMAGE_REPO_PROD: ""
+      DOCKERFILE_STAGE: develop
+      DOCKERFILE_STAGE_PROD: master
+    steps:
+      - run:
+          name: Overwrite ENV
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              echo "export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_PROD}" >> $BASH_ENV
+              echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL_PROD}" >> $BASH_ENV
+              echo "export IMAGE_REPO=$IMAGE_REPO_PROD" >> $BASH_ENV
+              echo "export DOCKERFILE_STAGE=$DOCKERFILE_STAGE_PROD" >> $BASH_ENV
+            fi
+      - run:
+          name: Check whether image already exists
+          command: |
+            set +e
+            aws ecr list-images --filter tagStatus=TAGGED --repository-name IMAGE_REPO | \
+            jq '.imageIds[].imageTag' | grep $CIRCLE_SHA1; echo $? > exit_code; cat exit_code
+      - run:
+          name: Exit if image already exists
+          command: |
+            if [ $(cat exit_code) -eq "0" ]; then
+              circleci-agent step halt;
+            fi
+            rm exit_code
+      - awsecr/build-and-push-image:
+          extra-build-args: --target $DOCKERFILE_STAGE
+          region: AWS_DEFAULT_REGION
+          repo: $IMAGE_REPO
+          tag: $CIRCLE_SHA1
+      - run:
+          name: Also push latest tag
+          command: |
+            docker tag $AWS_ECR_ACCOUNT_URL/$IMAGE_REPO:$CIRCLE_SHA1 $AWS_ECR_ACCOUNT_URL/$IMAGE_REPO:latest
+            docker push $AWS_ECR_ACCOUNT_URL/$IMAGE_REPO:latest
+
+  deploy:
+    executor: awscli/default
+    environment:
+      AWS_ECR_ACCOUNT_URL: ""
+      AWS_ECR_ACCOUNT_URL_PROD: ""
+      IMAGE_REPO: ""
+      IMAGE_REPO_PROD: ""
+      CLUSTER_DEV: ""
+      CLUSTER_PROD: ""
+    steps:
+      - checkout
+      - run:
+          name: Overwrite ENV
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              echo "export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_PROD}" >> $BASH_ENV
+              echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL_PROD}" >> $BASH_ENV
+              echo "export IMAGE_REPO=$IMAGE_REPO_PROD" >> $BASH_ENV
+            fi
+      - aws-cli-v2/install
+      - kube/install-kubectl
+      - run:
+          name: Update kubeconfig
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              aws eks update-kubeconfig --name $CLUSTER_PROD
+            else
+              aws eks update-kubeconfig --name $CLUSTER_DEV
+            fi
+            kubectl get po
+      - run:
+          name: Install Helm
+          command: |
+            curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
+            bash ./get_helm.sh --version v3.1.2
+            helm version
+            helm ls -a
+      - run:
+          name: Install helm-secrets and sops
+          command: |
+            helm plugin install https://github.com/futuresimple/helm-secrets
+            wget https://github.com/mozilla/sops/releases/download/v3.5.0/sops_3.5.0_amd64.deb
+            sudo dpkg -i sops_3.5.0_amd64.deb
+      - run:
+          name: Select staging slot
+          environment:
+            SVC_INHOUSE: app-inhouse
+            SVC_PUBLIC: app-public
+          command: |
+            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+            source $BASH_ENV
+            if [ "$INHOUSE_SLOT" == "" ]; then
+              echo 'export INHOUSE_SLOT=green' >> $BASH_ENV
+            fi
+            echo "PUBLIC_SLOT=$(kubectl get svc $SVC_PUBLIC -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+            source $BASH_ENV
+            if [ "$PUBLIC_SLOT" == "" ]; then
+              echo 'export PUBLIC_SLOT=blue' >> $BASH_ENV
+            fi
+            echo "export PUBLIC_TAG=$(kubectl get deploy app-$PUBLIC_SLOT -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -e s/.*://)"
+            source $BASH_ENV
+            if [ "$PUBLIC_TAG" == "" ]; then
+              echo 'export PUBLIC_TAG=latest' >> $BASH_ENV
+            fi
+      - run:
+          name: Deploy
+          command: >
+            echo $INHOUSE_SLOT;
+            echo $PUBLIC_SLOT;
+            echo $PUBLIC_TAG;
+            helm secrets upgrade --install
+            app kubernetes/helm/app
+            --set image.repository=$AWS_ECR_ACCOUNT_URL/$IMAGE_REPO
+            --set image.tag.$INHOUSE_SLOT=$CIRCLE_SHA1
+            --set image.tag.$PUBLIC_SLOT=$PUBLIC_TAG
+            --set $INHOUSE_SLOT.enabled=true
+            --set $PUBLIC_SLOT.enabled=true
+            --set environment=$CIRCLE_BRANCH
+            -f $SECRETS_DIR/secrets.yaml
+            --wait --timeout 10m
+            --history-max 50
+
+  switch:
+    executor: awscli/default
+    environment:
+      CLUSTER_DEV: ""
+      CLUSTER_PROD: ""
+    steps:
+      - checkout
+      - run:
+          name: Overwrite ENV
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              echo "export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID_PROD}" >> $BASH_ENV
+              echo "export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_PROD}" >> $BASH_ENV
+            fi
+      - aws-cli-v2/install
+      - kube/install-kubectl
+      - run:
+          name: Update kubeconfig
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              aws eks update-kubeconfig --name $CLUSTER_PROD
+            else
+              aws eks update-kubeconfig --name $CLUSTER_DEV
+            fi
+            kubectl get po
+      - run:
+          name: Install Helm
+          command: |
+            curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
+            bash ./get_helm.sh --version v3.1.2
+            helm version
+            helm ls -a
+      - run:
+          name: Select staging slot
+          environment:
+            SVC_INHOUSE: app-inhouse
+          command: |
+            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+      - run:
+          name: Switch traffic
+          # べき等な操作のはず
+          command: >
+            echo $INHOUSE_SLOT;
+            helm upgrade
+            app kubernetes/helm/app
+            --set publicSlot=$INHOUSE_SLOT
+            --reuse-values --wait
+            --history-max 50
+      - run:
+          name: Select staging slot
+          environment:
+            SVC_INHOUSE: app-inhouse
+          command: |
+            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+      - run:
+          name: Disable staging deployment
+          # べき等な操作のはず
+          command: >
+            echo $INHOUSE_SLOT;
+            helm upgrade
+            app kubernetes/helm/app
+            --set $INHOUSE_SLOT.enabled=false
+            --reuse-values --wait
+            --history-max 50
+
+workflows:
+  version: 2
+  build-deploy-switch:
+    jobs:
+      - build:
+          filters:
+            branches:
+              only:
+                - master
+                - develop
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - master
+                - develop
+      - hold:
+          type: approval
+          requires:
+            - deploy
+          filters:
+            branches:
+              only:
+                - master
+      - switch:
+          requires:
+            - hold
+          filters:
+            branches:
+              only:
+                - master

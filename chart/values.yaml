@@ -1,0 +1,48 @@
+nameOverride: "app"
+fullnameOverride: "app"
+
+securityContext: {}
+#  readOnlyRootFilesystem: true
+#  runAsNonRoot: true
+#  runAsUser: 1000
+
+service:
+  type: NodePort
+  port: 3000
+  targetPort: 3000
+
+nodeSelector: {}
+
+replicaCount: 6
+devReplicaCount: 3
+
+resources:
+  limits:
+    cpu: 40m
+    memory: 128Mi
+  requests:
+    cpu: 40m
+    memory: 128Mi
+
+devResources:
+  limits:
+    cpu: 40m
+    memory: 32Mi
+  requests:
+    cpu: 40m
+    memory: 32Mi
+
+environment: develop
+
+image:
+  repository: ""
+  tag:
+    blue: latest
+    green: latest
+  pullPolicy: IfNotPresent
+
+publicSlot: blue
+green:
+  enabled: false
+blue:
+  enabled: false
