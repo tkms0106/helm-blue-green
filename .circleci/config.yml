@@ -146,6 +146,7 @@ jobs:
             app kubernetes/helm/app
             --set environment=$CIRCLE_BRANCH
             --set image.repository=$AWS_ECR_ACCOUNT_URL/$IMAGE_REPO
+            --set publicSlot=$PUBLIC_SLOT
             $INHOUSE_OPTION
             $PUBLIC_OPTION
             -f $SECRETS_DIR/secrets.yaml
