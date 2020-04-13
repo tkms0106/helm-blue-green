@@ -4,7 +4,27 @@ orbs:
   awsecr: circleci/aws-ecr@6.7.0 # https://circleci.com/orbs/registry/orb/circleci/aws-ecr
   kube: circleci/kubernetes@0.11.0 # https://circleci.com/orbs/registry/orb/circleci/kubernetes
   helm: circleci/helm@0.2.3 #https://circleci.com/orbs/registry/orb/circleci/helm
-  slot-extractor: # require kubectl
+  build-skipper: # AWS CLI & jq required
+    commands:
+      skip:
+        parameters:
+          repository:
+            type: string
+        steps:
+          - run:
+                name: Check whether image already exists
+                command: |
+                  set +e
+                  aws ecr list-images --filter tagStatus=TAGGED --repository-name <<parameters.repository>> | \
+                  jq '.imageIds[].imageTag' | grep $CIRCLE_SHA1; echo $? > exit_code; cat exit_code
+          - run:
+              name: Exit if image already exists
+              command: |
+                if [ $(cat exit_code) -eq "0" ]; then
+                  circleci-agent step halt;
+                fi
+                rm exit_code
+  slot-extractor: # kubectl required
     commands:
       extract:
         parameters:
@@ -46,19 +66,8 @@ jobs:
               echo "export IMAGE_REPO=$IMAGE_REPO_PROD" >> $BASH_ENV
               echo "export DOCKERFILE_STAGE=$DOCKERFILE_STAGE_PROD" >> $BASH_ENV
             fi
-      - run:
-          name: Check whether image already exists
-          command: |
-            set +e
-            aws ecr list-images --filter tagStatus=TAGGED --repository-name IMAGE_REPO | \
-            jq '.imageIds[].imageTag' | grep $CIRCLE_SHA1; echo $? > exit_code; cat exit_code
-      - run:
-          name: Exit if image already exists
-          command: |
-            if [ $(cat exit_code) -eq "0" ]; then
-              circleci-agent step halt;
-            fi
-            rm exit_code
+      - build-skipper/skip:
+          repository: $IMAGE_REPO
       - awsecr/build-and-push-image:
           extra-build-args: --target $DOCKERFILE_STAGE
           region: AWS_DEFAULT_REGION
