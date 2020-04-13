@@ -4,6 +4,17 @@ orbs:
   awsecr: circleci/aws-ecr@6.7.0 # https://circleci.com/orbs/registry/orb/circleci/aws-ecr
   kube: circleci/kubernetes@0.11.0 # https://circleci.com/orbs/registry/orb/circleci/kubernetes
   helm: circleci/helm@0.2.3 #https://circleci.com/orbs/registry/orb/circleci/helm
+  slot-extractor: # require kubectl
+    commands:
+      extract:
+        parameters:
+          slot:
+            type: string
+          service:
+            type: string
+        steps:
+          - run:
+              command: echo "export <<parameters.slot>>=$(kubectl get svc <<parameters.service>> -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
   aws-cli-v2: #https://gist.github.com/fujiwara/58c1c95df14d82a8b1a8d8d404170879
     commands:
       install:
@@ -99,22 +110,12 @@ jobs:
             helm plugin install https://github.com/futuresimple/helm-secrets
             wget https://github.com/mozilla/sops/releases/download/v3.5.0/sops_3.5.0_amd64.deb
             sudo dpkg -i sops_3.5.0_amd64.deb
-      - run:
-          name: Select staging slot
-          environment:
-            SVC_INHOUSE: app-inhouse
-            SVC_PUBLIC: app-public
-          command: |
-            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
-            source $BASH_ENV
-            if [ "$INHOUSE_SLOT" == "" ]; then
-              echo 'export INHOUSE_SLOT=green' >> $BASH_ENV
-            fi
-            echo "PUBLIC_SLOT=$(kubectl get svc $SVC_PUBLIC -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
-            source $BASH_ENV
-            if [ "$PUBLIC_SLOT" == "" ]; then
-              echo 'export PUBLIC_SLOT=blue' >> $BASH_ENV
-            fi
+      - slot-extractor/extract:
+          slot: INHOUSE_SLOT
+          service: app-inhouse
+      - slot-extractor/extract:
+          slot: PUBLIC_SLOT
+          service: app-public
       - run:
           name: Set PUBLIC_TAG
           command: |
@@ -177,12 +178,9 @@ jobs:
             kubectl get po
       - helm/install-helm-client:
           version: v3.1.2
-      - run:
-          name: Select staging slot
-          environment:
-            SVC_INHOUSE: app-inhouse
-          command: |
-            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+      - slot-extractor/extract:
+          slot: INHOUSE_SLOT
+          service: app-inhouse
       - run:
           name: Switch traffic
           # べき等な操作のはず
@@ -193,12 +191,9 @@ jobs:
             --set publicSlot=$INHOUSE_SLOT
             --reuse-values --wait
             --history-max 50
-      - run:
-          name: Select staging slot
-          environment:
-            SVC_INHOUSE: app-inhouse
-          command: |
-            echo "INHOUSE_SLOT=$(kubectl get svc $SVC_INHOUSE -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
+      - slot-extractor/extract:
+          slot: INHOUSE_SLOT
+          service: app-inhouse
       - run:
           name: Disable staging deployment
           # べき等な操作のはず
