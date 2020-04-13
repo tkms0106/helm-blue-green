@@ -3,6 +3,7 @@ orbs:
   awscli: circleci/aws-cli@0.1.20 # https://circleci.com/orbs/registry/orb/circleci/aws-cli
   awsecr: circleci/aws-ecr@6.7.0 # https://circleci.com/orbs/registry/orb/circleci/aws-ecr
   kube: circleci/kubernetes@0.11.0 # https://circleci.com/orbs/registry/orb/circleci/kubernetes
+  helm: circleci/helm@0.2.3 #https://circleci.com/orbs/registry/orb/circleci/helm
   aws-cli-v2: #https://gist.github.com/fujiwara/58c1c95df14d82a8b1a8d8d404170879
     commands:
       install:
@@ -90,13 +91,8 @@ jobs:
               aws eks update-kubeconfig --name $CLUSTER_DEV
             fi
             kubectl get po
-      - run:
-          name: Install Helm
-          command: |
-            curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
-            bash ./get_helm.sh --version v3.1.2
-            helm version
-            helm ls -a
+      - helm/install-helm-client:
+          version: v3.1.2
       - run:
           name: Install helm-secrets and sops
           command: |
@@ -179,13 +175,8 @@ jobs:
               aws eks update-kubeconfig --name $CLUSTER_DEV
             fi
             kubectl get po
-      - run:
-          name: Install Helm
-          command: |
-            curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
-            bash ./get_helm.sh --version v3.1.2
-            helm version
-            helm ls -a
+      - helm/install-helm-client:
+          version: v3.1.2
       - run:
           name: Select staging slot
           environment:
