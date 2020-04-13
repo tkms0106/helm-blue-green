@@ -128,6 +128,15 @@ jobs:
               echo 'export PUBLIC_TAG=latest' >> $BASH_ENV
             fi
       - run:
+          name: Manage options
+          command: |
+            echo 'export INHOUSE_OPTION="--set image.tag.$INHOUSE_SLOT=$CIRCLE_SHA1 --set $INHOUSE_SLOT.enabled=true"' >> $BASH_ENV
+            if [ "${CIRCLE_BRANCH}" == "develop" ]; then
+              echo 'export PUBLIC_OPTION=""' >> $BASH_ENV
+            else
+              echo 'export PUBLIC_OPTION="--set image.tag.$PUBLIC_SLOT=$PUBLIC_TAG --set $PUBLIC_SLOT.enabled=true"' >> $BASH_ENV
+            fi
+      - run:
           name: Deploy
           command: >
             echo $INHOUSE_SLOT;
@@ -135,12 +144,10 @@ jobs:
             echo $PUBLIC_TAG;
             helm secrets upgrade --install
             app kubernetes/helm/app
-            --set image.repository=$AWS_ECR_ACCOUNT_URL/$IMAGE_REPO
-            --set image.tag.$INHOUSE_SLOT=$CIRCLE_SHA1
-            --set image.tag.$PUBLIC_SLOT=$PUBLIC_TAG
-            --set $INHOUSE_SLOT.enabled=true
-            --set $PUBLIC_SLOT.enabled=true
             --set environment=$CIRCLE_BRANCH
+            --set image.repository=$AWS_ECR_ACCOUNT_URL/$IMAGE_REPO
+            $INHOUSE_OPTION
+            $PUBLIC_OPTION
             -f $SECRETS_DIR/secrets.yaml
             --wait --timeout 10m
             --history-max 50
