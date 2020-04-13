@@ -118,7 +118,7 @@ jobs:
       - run:
           name: Set PUBLIC_TAG
           command: |
-            echo "export PUBLIC_TAG=$(kubectl get deploy app-$PUBLIC_SLOT -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -e s/.*://)"
+            echo "export PUBLIC_TAG=$(kubectl get deploy app-$PUBLIC_SLOT -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -e s/.*://)" >> $BASH_ENV
             source $BASH_ENV
             if [ "$PUBLIC_TAG" == "" ]; then
               echo 'export PUBLIC_TAG=latest' >> $BASH_ENV
