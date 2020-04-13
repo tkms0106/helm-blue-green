@@ -35,14 +35,14 @@ devResources:
 environment: develop
 
 image:
+  pullPolicy: IfNotPresent
   repository: ""
   tag:
     blue: latest
     green: latest
-  pullPolicy: IfNotPresent
 
 publicSlot: blue
-green:
-  enabled: false
 blue:
+  enabled: false
+green:
   enabled: false
