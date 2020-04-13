@@ -119,6 +119,9 @@ jobs:
             if [ "$PUBLIC_SLOT" == "" ]; then
               echo 'export PUBLIC_SLOT=blue' >> $BASH_ENV
             fi
+      - run:
+          name: Set PUBLIC_TAG
+          command: |
             echo "export PUBLIC_TAG=$(kubectl get deploy app-$PUBLIC_SLOT -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -e s/.*://)"
             source $BASH_ENV
             if [ "$PUBLIC_TAG" == "" ]; then
