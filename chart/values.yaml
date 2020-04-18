@@ -14,7 +14,6 @@ service:
 nodeSelector: {}
 
 replicaCount: 6
-devReplicaCount: 3
 
 resources:
   limits:
@@ -23,14 +22,6 @@ resources:
   requests:
     cpu: 40m
     memory: 128Mi
-
-devResources:
-  limits:
-    cpu: 40m
-    memory: 32Mi
-  requests:
-    cpu: 40m
-    memory: 32Mi
 
 environment: develop
 

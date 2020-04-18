@@ -9,11 +9,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
-  {{ if eq .Values.environment "master" }}
   replicas: {{ .Values.replicaCount }}
-  {{ else }}
-  replicas: {{ .Values.devReplicaCount }}
-  {{ end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "app.name" . }}
@@ -60,11 +56,7 @@ spec:
               exec:
                 command: ["/bin/sh", "-c", "echo preStop!; sleep 20"]
           resources:
-            {{ if eq .Values.environment "master" }}
             {{- toYaml .Values.resources | nindent 12 }}
-            {{ else }}
-            {{- toYaml .Values.devResources | nindent 12 }}
-            {{ end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
