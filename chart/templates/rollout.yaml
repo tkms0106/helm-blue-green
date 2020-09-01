@@ -1,8 +1,7 @@
-{{ if .Values.green.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
-  name: {{ include "app.fullname" . }}-green
+  name: {{ include "app.fullname" . }}-blue
   labels:
     app.kubernetes.io/name: {{ include "app.name" . }}
     helm.sh/chart: {{ include "app.chart" . }}
@@ -19,13 +18,13 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "app.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-        slot: green
+        slot: blue
     spec:
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag.green }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -51,14 +50,18 @@ spec:
             httpGet:
               path: /
               port: http
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "echo preStop!; sleep 20"]
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-{{ end }}
+  minReadySeconds: 30
+  strategy:
+    blueGreen:
+      activeService: {{ include "app.fullname" . }}-active
+      previewService: {{ include "app.fullname" . }}-preview
+      previewReplicaCount: 1
+      autoPromotionEnabled: {{ .Values.autoPromotionEnabled }}
+      scaleDownDelaySeconds: 30
+      scaleDownDelayRevisionLimit: 2

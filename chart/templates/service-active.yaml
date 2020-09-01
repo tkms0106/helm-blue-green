@@ -1,8 +1,7 @@
-{{ if not (eq .Values.environment "develop") }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "app.fullname" . }}-public
+  name: {{ include "app.fullname" . }}-active
   labels:
     app.kubernetes.io/name: {{ include "app.name" . }}
     helm.sh/chart: {{ include "app.chart" . }}
@@ -20,5 +19,3 @@ spec:
   selector:
     app.kubernetes.io/name: {{ include "app.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    slot: {{ .Values.publicSlot }}
-{{ end }}

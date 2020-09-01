@@ -1,6 +1,6 @@
 version: 2.1
 orbs:
-  awscli: circleci/aws-cli@0.1.20 # https://circleci.com/orbs/registry/orb/circleci/aws-cli
+  awscli: circleci/aws-cli@1.2.1 # https://circleci.com/orbs/registry/orb/circleci/aws-cli
   awsecr: circleci/aws-ecr@6.7.0 # https://circleci.com/orbs/registry/orb/circleci/aws-ecr
   kube: circleci/kubernetes@0.11.0 # https://circleci.com/orbs/registry/orb/circleci/kubernetes
   helm: circleci/helm@0.2.3 #https://circleci.com/orbs/registry/orb/circleci/helm
@@ -24,25 +24,6 @@ orbs:
                   circleci-agent step halt;
                 fi
                 rm exit_code
-  slot-extractor: # kubectl required
-    commands:
-      extract:
-        parameters:
-          slot:
-            type: string
-          service:
-            type: string
-        steps:
-          - run:
-              command: echo "export <<parameters.slot>>=$(kubectl get svc <<parameters.service>> -o jsonpath='{.spec.selector.slot}')" >> $BASH_ENV
-  aws-cli-v2: #https://gist.github.com/fujiwara/58c1c95df14d82a8b1a8d8d404170879
-    commands:
-      install:
-        steps:
-          - run: |
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              unzip awscliv2.zip
-              sudo ./aws/install
 
 jobs:
   build:
@@ -94,13 +75,13 @@ jobs:
           name: Overwrite ENV
           command: |
             if [ "${CIRCLE_BRANCH}" == "master" ]; then
-              echo "export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID_PROD}" >> $BASH_ENV
-              echo "export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID_PROD}" >> $BASH_ENV
-              echo "export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_PROD}" >> $BASH_ENV
-              echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL_PROD}" >> $BASH_ENV
+              echo "export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_PROD" >> $BASH_ENV
+              echo "export AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID_PROD" >> $BASH_ENV
+              echo "export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_PROD" >> $BASH_ENV
+              echo "export AWS_ECR_ACCOUNT_URL=$AWS_ECR_ACCOUNT_URL_PROD" >> $BASH_ENV
               echo "export IMAGE_REPO=$IMAGE_REPO_PROD" >> $BASH_ENV
             fi
-      - aws-cli-v2/install
+      - awscli/install
       - kube/install-kubectl
       - run:
           name: Update kubeconfig
@@ -112,50 +93,21 @@ jobs:
             fi
             kubectl get po
       - helm/install-helm-client:
-          version: v3.1.2
+          version: v3.3.0
       - run:
           name: Install helm-secrets and sops
           command: |
             helm plugin install https://github.com/futuresimple/helm-secrets
             wget https://github.com/mozilla/sops/releases/download/v3.5.0/sops_3.5.0_amd64.deb
             sudo dpkg -i sops_3.5.0_amd64.deb
-      - slot-extractor/extract:
-          slot: INHOUSE_SLOT
-          service: app-inhouse
-      - slot-extractor/extract:
-          slot: PUBLIC_SLOT
-          service: app-public
-      - run:
-          name: Set PUBLIC_TAG
-          command: |
-            echo "export PUBLIC_TAG=$(kubectl get deploy app-$PUBLIC_SLOT -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -e s/.*://)" >> $BASH_ENV
-            source $BASH_ENV
-            if [ "$PUBLIC_TAG" == "" ]; then
-              echo 'export PUBLIC_TAG=latest' >> $BASH_ENV
-            fi
-      - run:
-          name: Manage options
-          command: |
-            echo 'export INHOUSE_OPTION="--set image.tag.$INHOUSE_SLOT=$CIRCLE_SHA1 --set $INHOUSE_SLOT.enabled=true"' >> $BASH_ENV
-            if [ "${CIRCLE_BRANCH}" == "develop" ]; then
-              echo 'export PUBLIC_OPTION=""' >> $BASH_ENV
-            else
-              echo 'export PUBLIC_OPTION="--set image.tag.$PUBLIC_SLOT=$PUBLIC_TAG --set $PUBLIC_SLOT.enabled=true"' >> $BASH_ENV
-            fi
       - run:
           name: Deploy
           command: >
-            echo $INHOUSE_SLOT;
-            echo $PUBLIC_SLOT;
-            echo $PUBLIC_TAG;
             helm secrets upgrade --install
             app kubernetes/helm/app
             --set environment=$CIRCLE_BRANCH
             --set image.repository=$AWS_ECR_ACCOUNT_URL/$IMAGE_REPO
-            --set publicSlot=$PUBLIC_SLOT
-            $INHOUSE_OPTION
-            $PUBLIC_OPTION
-            -f $SECRETS_DIR/secrets.yaml
+            --set image.tag=$CIRCLE_SHA1
             --wait --timeout 10m
             --history-max 50
 
@@ -174,7 +126,7 @@ jobs:
               echo "export AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID_PROD}" >> $BASH_ENV
               echo "export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_PROD}" >> $BASH_ENV
             fi
-      - aws-cli-v2/install
+      - awscli/install
       - kube/install-kubectl
       - run:
           name: Update kubeconfig
@@ -185,34 +137,16 @@ jobs:
               aws eks update-kubeconfig --name $CLUSTER_DEV
             fi
             kubectl get po
-      - helm/install-helm-client:
-          version: v3.1.2
-      - slot-extractor/extract:
-          slot: INHOUSE_SLOT
-          service: app-inhouse
       - run:
-          name: Switch traffic
-          # べき等な操作のはず
-          command: >
-            echo $INHOUSE_SLOT;
-            helm upgrade
-            app kubernetes/helm/app
-            --set publicSlot=$INHOUSE_SLOT
-            --reuse-values --wait
-            --history-max 50
-      - slot-extractor/extract:
-          slot: INHOUSE_SLOT
-          service: app-inhouse
+          name: Install Argo Rollouts kubectl plugin
+          command: |
+            curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+            chmod +x ./kubectl-argo-rollouts-linux-amd64
+            sudo mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
       - run:
-          name: Disable staging deployment
-          # べき等な操作のはず
+          name: Promote Rollout
           command: >
-            echo $INHOUSE_SLOT;
-            helm upgrade
-            app kubernetes/helm/app
-            --set $INHOUSE_SLOT.enabled=false
-            --reuse-values --wait
-            --history-max 50
+            kubectl-argo-rollouts promote app
 
 workflows:
   version: 2
@@ -240,6 +174,7 @@ workflows:
             branches:
               only:
                 - master
+                - develop
       - switch:
           requires:
             - hold
@@ -247,3 +182,4 @@ workflows:
             branches:
               only:
                 - master
+                - develop

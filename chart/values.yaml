@@ -28,12 +28,6 @@ environment: develop
 image:
   pullPolicy: IfNotPresent
   repository: ""
-  tag:
-    blue: latest
-    green: latest
+  tag: latest
 
-publicSlot: blue
-blue:
-  enabled: false
-green:
-  enabled: false
+autoPromotionEnabled: false
